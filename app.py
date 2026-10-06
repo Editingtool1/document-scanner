@@ -8,8 +8,8 @@ st.set_page_config(page_title="مساعد معالجة المستمسكات", la
 
 st.markdown("""
 <div dir="rtl" style="text-align: center;">
-    <h2>📄 أداة المسح الضوئي وتعديل المستمسكات</h2>
-    <p>قم برفع صورة الهوية أو المستمسك لتعديل الزوايا تلقائياً وتحسين الجودة</p>
+    <h2>📄 أداة فحص وتعديل المستمسكات</h2>
+    <p>ارفع صورة المستمسك، وحدد طريقة القص والمعالجة المطلوبة</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -43,81 +43,96 @@ def four_point_transform(image, pts):
     warped = cv2.warpPerspective(image, M, (maxWidth, maxHeight))
     return warped
 
-def scan_document(image):
+def auto_detect_and_warp(image):
     orig = image.copy()
-    ratio = image.shape[0] / 500.0
-    h = 500
-    w = int(image.shape[1] * (500.0 / image.shape[0]))
+    ratio = image.shape[0] / 600.0
+    h = 600
+    w = int(image.shape[1] * (600.0 / image.shape[0]))
     resized = cv2.resize(image, (w, h))
 
     gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
-    gray = cv2.GaussianBlur(gray, (5, 5), 0)
-    edged = cv2.Canny(gray, 75, 200)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    edged = cv2.Canny(blurred, 30, 150)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    dilated = cv2.dilate(edged, kernel, iterations=1)
 
-    cnts, _ = cv2.findContours(edged.copy(), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    cnts, _ = cv2.findContours(dilated.copy(), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     cnts = sorted(cnts, key=cv2.contourArea, reverse=True)[:5]
 
-    screenCnt = None
     for c in cnts:
         peri = cv2.arcLength(c, True)
         approx = cv2.approxPolyDP(c, 0.02 * peri, True)
-        if len(approx) == 4:
-            screenCnt = approx
-            break
+        if len(approx) == 4 and cv2.contourArea(c) > (w * h * 0.1):
+            return four_point_transform(orig, approx.reshape(4, 2) * ratio), True
 
-    if screenCnt is not None:
-        warped = four_point_transform(orig, screenCnt.reshape(4, 2) * ratio)
-    else:
-        warped = orig
-
-    return warped
+    return orig, False
 
 def enhance_image(img, mode="color"):
     if mode == "gray":
         return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     elif mode == "scanner":
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        return cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 21, 10)
+        return cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 21, 11)
     else:
         lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
         l, a, b = cv2.split(lab)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         cl = clahe.apply(l)
         limg = cv2.merge((cl, a, b))
         return cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
 
-uploaded_file = st.file_uploader("اختر صورة المستمسك أو قم بسحبها هنا", type=['jpg', 'jpeg', 'png'])
+uploaded_file = st.file_uploader("اختر صورة المستمسك", type=['jpg', 'jpeg', 'png'])
 
 if uploaded_file is not None:
     file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-    img = cv2.imdecode(file_bytes, 1)
+    img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+
+    st.sidebar.header("⚙️ خيارات المعالجة")
+    method = st.sidebar.radio("طريقة التعديل:", ["تعديل وقص آلي للزوايا", "قص يدوي بالمنزلقات (دقيق)"])
+    output_mode = st.sidebar.radio("نمط الوضوح:", ["ألوان واضحة", "مستند سكنر (أبيض وأسود)", "تدرج رمادي"])
+    mode_map = {"ألوان واضحة": "color", "مستند سكنر (أبيض وأسود)": "scanner", "تدرج رمادي": "gray"}
+
+    h, w = img.shape[:2]
+
+    if method == "تعديل وقص آلي للزوايا":
+        processed_img, detected = auto_detect_and_warp(img)
+        if not detected:
+            st.warning("⚠️ لم يتم تمييز حواف المستمسك بدقة بسبب الخلفية. يمكنك الانتقال إلى 'قص يدوي بالمنزلقات' من القائمة الجانبية.")
+    else:
+        st.sidebar.subheader("حدد أطراف القص (%):")
+        top = st.sidebar.slider("قص من الأعلى", 0, 40, 5)
+        bottom = st.sidebar.slider("قص من الأسفل", 0, 40, 5)
+        left = st.sidebar.slider("قص من اليسار", 0, 40, 5)
+        right = st.sidebar.slider("قص من اليمين", 0, 40, 5)
+
+        y1 = int(h * (top / 100.0))
+        y2 = int(h * (1.0 - bottom / 100.0))
+        x1 = int(w * (left / 100.0))
+        x2 = int(w * (1.0 - right / 100.0))
+
+        if y2 > y1 and x2 > x1:
+            processed_img = img[y1:y2, x1:x2]
+        else:
+            processed_img = img
+
+    result = enhance_image(processed_img, mode_map[output_mode])
 
     col1, col2 = st.columns(2)
     with col1:
         st.subheader("الصورة الأصلية")
         st.image(cv2.cvtColor(img, cv2.COLOR_BGR2RGB), use_container_width=True)
 
-    with st.spinner("جاري تعديل الزوايا والمنظور..."):
-        warped = scan_document(img)
-
     with col2:
-        st.subheader("النتيجة المستوية")
-        mode = st.radio("نمط الإخراج:", ["ألوان محسنة", "أبيض وأسود سكنر", "تدرج رمادي"], horizontal=True)
-        
-        mode_map = {"ألوان محسنة": "color", "أبيض وأسود سكنر": "scanner", "تدرج رمادي": "gray"}
-        result = enhance_image(warped, mode_map[mode])
-        
-        if mode == "أبيض وأسود سكنر" or mode == "تدرج رمادي":
-            res_disp = result
+        st.subheader("النتيجة المستوية والمعدلة")
+        if output_mode in ["مستند سكنر (أبيض وأسود)", "تدرج رمادي"]:
+            st.image(result, use_container_width=True)
         else:
-            res_disp = cv2.cvtColor(result, cv2.COLOR_BGR2RGB)
-            
-        st.image(res_disp, use_container_width=True)
+            st.image(cv2.cvtColor(result, cv2.COLOR_BGR2RGB), use_container_width=True)
 
         is_success, buffer = cv2.imencode(".png", result)
         st.download_button(
-            label="💾 تحميل الصورة المعدلة",
+            label="💾 تحميل المستمسك المعدل",
             data=io.BytesIO(buffer),
-            file_name="scanned_document.png",
+            file_name="adjusted_document.png",
             mime="image/png"
         )
