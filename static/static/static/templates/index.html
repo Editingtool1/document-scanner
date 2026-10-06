@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0">
+
+    <title>مصحح المستمسكات</title>
+
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+
+<header class="header">
+
+    <div>
+        <h1>مصحح المستمسكات</h1>
+        <p>
+            تصحيح المنظور وتجهيز المستندات للطباعة والتحويل إلى A4
+        </p>
+    </div>
+
+    <label class="upload-btn">
+        + إضافة مستند
+        <input
+            type="file"
+            id="fileInput"
+            accept="image/jpeg,image/png,image/webp"
+        >
+    </label>
+
+</header>
+
+
+<main class="container">
+
+    <!-- أدوات العمل -->
+
+    <div class="toolbar">
+
+        <button id="resetBtn">
+            إعادة ضبط
+        </button>
+
+        <button
+            id="correctBtn"
+            class="primary"
+        >
+            تصحيح المستند
+        </button>
+
+        <button id="addA4Btn">
+            إضافة إلى A4
+        </button>
+
+    </div>
+
+
+    <div class="workspace">
+
+
+        <!-- تحديد المستند -->
+
+        <section class="panel">
+
+            <div class="panel-title">
+
+                <strong>
+                    1 — تحديد زوايا المستند
+                </strong>
+
+                <span id="status">
+                    ارفع صورة للبدء
+                </span>
+
+            </div>
+
+
+            <div
+                id="editor"
+                class="editor"
+            >
+
+                <canvas id="editorCanvas"></canvas>
+
+            </div>
+
+
+            <div class="help">
+
+                حرك النقاط الأربع إلى زوايا المستند
+                بالترتيب:
+
+                <b>1 → 2 → 3 → 4</b>
+
+            </div>
+
+        </section>
+
+
+
+        <!-- المعاينة -->
+
+        <section class="panel">
+
+            <div class="panel-title">
+
+                <strong>
+                    2 — المعاينة
+                </strong>
+
+            </div>
+
+
+            <div class="preview">
+
+                <canvas id="previewCanvas"></canvas>
+
+            </div>
+
+        </section>
+
+    </div>
+
+
+
+    <!-- A4 -->
+
+    <section class="panel a4-panel">
+
+        <div class="panel-title">
+
+            <strong>
+                3 — ورقة A4
+            </strong>
+
+            <div>
+
+                <button id="portraitBtn">
+                    A4 عمودي
+                </button>
+
+                <button id="landscapeBtn">
+                    A4 أفقي
+                </button>
+
+            </div>
+
+        </div>
+
+
+        <div class="a4-container">
+
+            <canvas id="a4Canvas"></canvas>
+
+        </div>
+
+
+        <p class="help">
+
+            بعد إضافة المستند إلى A4 يمكنك سحبه
+            ووضعه في أي مكان داخل الصفحة.
+
+        </p>
+
+    </section>
+
+
+
+    <!-- التصدير -->
+
+    <section class="panel export-panel">
+
+        <h3>
+            تحميل الملف
+        </h3>
+
+
+        <div class="export-options">
+
+            <select id="format">
+
+                <option value="pdf">
+                    PDF
+                </option>
+
+                <option value="jpg">
+                    JPG
+                </option>
+
+                <option value="png">
+                    PNG
+                </option>
+
+                <option value="webp">
+                    WEBP
+                </option>
+
+            </select>
+
+
+            <label>
+
+                جودة الملف
+
+                <input
+                    type="range"
+                    id="quality"
+                    min="0.2"
+                    max="1"
+                    step="0.05"
+                    value="0.9"
+                >
+
+            </label>
+
+
+            <button
+                id="downloadBtn"
+                class="primary"
+            >
+                تحميل الملف
+            </button>
+
+        </div>
+
+    </section>
+
+</main>
+
+
+<script src="js/app.js"></script>
+
+</body>
+</html>
