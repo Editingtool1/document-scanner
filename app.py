@@ -3,9 +3,6 @@ import cv2
 import numpy as np
 from PIL import Image
 import io
-import base64
-import json
-import streamlit.components.v1 as components
 from streamlit_image_coordinates import streamlit_image_coordinates
 
 st.set_page_config(page_title="منظومة تنظيم المستمسكات A4", layout="wide", page_icon="🪪")
@@ -16,6 +13,9 @@ A4_HEIGHT = 3508
 if 'a4_items' not in st.session_state:
     st.session_state.a4_items = []
 
+if 'active_doc_idx' not in st.session_state:
+    st.session_state.active_doc_idx = 0
+
 if 'pts_dict' not in st.session_state:
     st.session_state.pts_dict = {
         'p1': [50, 50],
@@ -23,24 +23,25 @@ if 'pts_dict' not in st.session_state:
         'p3': [500, 350],
         'p4': [50, 350]
     }
+
 if 'active_point' not in st.session_state:
     st.session_state.active_point = '1 (أعلى يسار)'
 
 st.markdown("""
 <div dir="rtl" style="text-align: center;">
-    <h2>🪪 منظومة تصحيح المستمسكات والتحكم التفاعلي بالماوس على A4</h2>
-    <p>قم باستعدال زوايا الهوية، ثم تحكّم بمكان وحجم المستمسكات داخل ورقة A4 بالسحب والتكبير بالماوس مباشرة.</p>
+    <h2>🪪 منظومة تصحيح زوايا المستمسكات وتجهيز ورقة A4</h2>
+    <p>استعدل زوايا الهوية، ورتّب مستمسكاتك داخل ورقة A4 للطباعة مع معاينة حية ومباشرة.</p>
 </div>
 """, unsafe_allow_html=True)
 
 def order_points(pts):
     rect = np.zeros((4, 2), dtype="float32")
     s = pts.sum(axis=1)
-    rect[0] = pts[np.argmin(s)]
-    rect[2] = pts[np.argmax(s)]
+    rect[0] = pts[np.argmin(s)] # 1: أعلى يسار
+    rect[2] = pts[np.argmax(s)] # 3: أسفل يمين
     diff = np.diff(pts, axis=1)
-    rect[1] = pts[np.argmin(diff)]
-    rect[3] = pts[np.argmax(diff)]
+    rect[1] = pts[np.argmin(diff)] # 2: أعلى يمين
+    rect[3] = pts[np.argmax(diff)] # 4: أسفل يسار
     return rect
 
 def warp_perspective(image, pts):
@@ -77,7 +78,35 @@ def enhance_doc(img, mode):
         cl = clahe.apply(l)
         return cv2.cvtColor(cv2.merge((cl, a, b)), cv2.COLOR_LAB2BGR)
 
-tab1, tab2 = st.tabs(["1️⃣ تعديل وقص زوايا المستمسك", "2️⃣ ورقة A4 التفاعلية (سحب وتحجيم بالماوس)"])
+# دالة رسم ورقة A4 ومعاينتها بدقة لضمان ظهور الصور فوراً
+def draw_a4_preview(items, preview_w=620):
+    preview_h = int(preview_w * (A4_HEIGHT / float(A4_WIDTH)))
+    canvas = Image.new("RGB", (preview_w, preview_h), (255, 255, 255))
+    
+    scale_w = preview_w / float(A4_WIDTH)
+    scale_h = preview_h / float(A4_HEIGHT)
+
+    for idx, item in enumerate(items):
+        doc_img = Image.fromarray(item["img"])
+        
+        # الأبعاد بالبكسل على ورقة A4 الأصلية (300 DPI)
+        target_w = int(A4_WIDTH * 0.44 * (item["scale"] / 100.0))
+        ratio = doc_img.height / float(doc_img.width)
+        target_h = int(target_w * ratio)
+
+        # تحويل الأبعاد لشاشة المعاينة
+        w_disp = max(20, int(target_w * scale_w))
+        h_disp = max(20, int(target_h * scale_h))
+
+        x_disp = int((item["x"] / 100.0) * preview_w)
+        y_disp = int((item["y"] / 100.0) * preview_h)
+
+        resized_doc = doc_img.resize((w_disp, h_disp), Image.Resampling.LANCZOS)
+        canvas.paste(resized_doc, (x_disp, y_disp))
+
+    return canvas
+
+tab1, tab2 = st.tabs(["1️⃣ تعديل وقص زوايا المستمسك", "2️⃣ معاينة وترتيب ورقة A4 للطباعة"])
 
 # ----------------- التبويب الأول -----------------
 with tab1:
@@ -94,7 +123,7 @@ with tab1:
 
         st.sidebar.markdown("### 🖱️ تحديد النقطة بالماوس")
         st.session_state.active_point = st.sidebar.radio(
-            "اختر النقطة لنقلها فور النقر على الصورة:",
+            "اختر النقطة لنقلها فور النقر بالماوس:",
             ["1 (أعلى يسار)", "2 (أعلى يمين)", "3 (أسفل يمين)", "4 (أسفل يسار)"]
         )
 
@@ -171,178 +200,140 @@ with tab1:
 
             st.image(final_rgb, caption="صورة المستمسك مفرودة كالسكانر", use_container_width=True)
 
-            doc_title = st.text_input("اسم المستمسك:", value="مستمسك رسمي")
-            if st.button("➕ إضافة هذا المستمسك إلى ورقة A4 التفاعلية", type="primary", use_container_width=True):
-                # تحويل الصورة إلى base64 لإدراجها في كانفاس الـ A4
-                _, buf_img = cv2.imencode('.png', cv2.cvtColor(final_rgb, cv2.COLOR_RGB2BGR))
-                b64_str = base64.b64encode(buf_img).decode()
-
-                # إضافة المستمسك بموضع افتراضي متدرج
+            doc_title = st.text_input("اسم المستمسك:", value=f"مستمسك {len(st.session_state.a4_items) + 1}")
+            if st.button("➕ حفظ وإضافة المستمسك إلى ورقة A4", type="primary", use_container_width=True):
+                # موضع متدرج تلقائي
+                new_y = 6 + (len(st.session_state.a4_items) * 26)
                 st.session_state.a4_items.append({
                     "id": len(st.session_state.a4_items) + 1,
                     "title": doc_title,
-                    "img_b64": b64_str,
-                    "img_np": final_rgb,
-                    "x": 60,
-                    "y": 60 + (len(st.session_state.a4_items) * 160),
-                    "scale": 0.4
+                    "img": final_rgb,
+                    "x": 8,
+                    "y": min(new_y, 70),
+                    "scale": 95
                 })
-                st.success(f"تمت إضافة '{doc_title}'! انتقل الآن لتبويب ورقة A4 التفاعلية.")
+                st.session_state.active_doc_idx = len(st.session_state.a4_items) - 1
+                st.success(f"تمت إضافة '{doc_title}' بنجاح! انتقل الآن لتبويب ورقة A4.")
 
 # ----------------- التبويب الثاني -----------------
 with tab2:
-    st.markdown("### 🖨️ ورقة A4 التفاعلية: حرّك وغيّر حجم المستمسكات بالماوس")
+    st.markdown("### 🖨️ معاينة ورقة A4 التفاعلية وتحديد الأماكن بالماوس")
 
     if len(st.session_state.a4_items) == 0:
-        st.info("ورقة الـ A4 فارغة حالياً. قم بقص مستمسك من التبويب الأول واضغط 'إضافة هذا المستمسك إلى ورقة A4'.")
+        st.info("ورقة الـ A4 فارغة حالياً. قم بقص المستمسك من التبويب الأول ثم اضغط 'حفظ وإضافة المستمسك إلى ورقة A4'.")
     else:
-        col_canvas_edit, col_export = st.columns([1.5, 1])
+        col_preview, col_controls = st.columns([1.3, 1.1])
 
-        with col_canvas_edit:
-            st.subheader("📄 لوحة التحكم التفاعلية على A4")
-            st.caption("💡 **طريقة الاستخدام:** انقر على أي مستمسك بالماوس لتحريكه بحرية، أو اسحب المربعات الزرقاء في أركانه لتكبيره وتصغيره.")
+        with col_preview:
+            st.subheader("📄 ورقة A4 (انقر بالماوس لتحديد موضع المستمسك):")
+            st.caption("💡 **انقر في أي مكان على الورقة** لنقل المستمسك المحدد إلى نقطة النقر فوراً[cite: 16].")
 
-            # عرض شاشة A4 تفاعلية بنسبة طول إلى عرض الورقة الحقيقية
-            canvas_w = 600
-            canvas_h = int(canvas_w * (A4_HEIGHT / float(A4_WIDTH)))
+            # توليد ورقة A4 الحية لعرضها في التطبيق
+            a4_display = draw_a4_preview(st.session_state.a4_items, preview_w=620)
 
-            # تجهيز بيانات المستمسكات
-            items_json = json.dumps([
-                {"id": it["id"], "src": f"data:image/png;base64,{it['img_b64']}", "x": it["x"], "y": it["y"], "scale": it["scale"]}
-                for it in st.session_state.a4_items
-            ])
+            # التقاط إحداثيات النقر بالماوس فوق ورقة A4
+            click_a4 = streamlit_image_coordinates(a4_display, key="a4_board_click")
 
-            fabric_html = f"""
-            <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
-            <div style="direction: ltr; text-align: center;">
-                <canvas id="a4Canvas" width="{canvas_w}" height="{canvas_h}" style="border: 2px solid #222; box-shadow: 0 4px 15px rgba(0,0,0,0.2); background: white;"></canvas>
-                <div style="margin-top: 12px;">
-                    <button onclick="saveA4Positions()" style="background: #1976d2; color: white; border: none; padding: 10px 20px; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 14px;">
-                        💾 حفظ التعديلات والأماكن الجديدة
-                    </button>
-                    <span id="saveStatus" style="color: green; font-weight: bold; margin-left: 10px; display: none;">✅ تم الحفظ بنجاح!</span>
-                </div>
-            </div>
+            if click_a4 is not None and len(st.session_state.a4_items) > 0:
+                cur_i = st.session_state.active_doc_idx
+                if cur_i < len(st.session_state.a4_items):
+                    new_x_pct = int((click_a4["x"] / 620.0) * 100)
+                    new_y_pct = int((click_a4["y"] / float(a4_display.height)) * 100)
 
-            <script>
-                const canvas = new fabric.Canvas('a4Canvas');
-                const itemsData = {items_json};
+                    new_x_pct = max(0, min(80, new_x_pct))
+                    new_y_pct = max(0, min(85, new_y_pct))
 
-                itemsData.forEach((item) => {{
-                    fabric.Image.fromURL(item.src, function(img) {{
-                        img.set({{
-                            left: item.x,
-                            top: item.y,
-                            scaleX: item.scale,
-                            scaleY: item.scale,
-                            cornerColor: '#007bff',
-                            cornerSize: 12,
-                            transparentCorners: false,
-                            borderColor: '#28a745',
-                            cornerStyle: 'circle'
-                        }});
-                        img.itemId = item.id;
-                        canvas.add(img);
-                    }});
-                }});
-
-                function saveA4Positions() {{
-                    let savedData = [];
-                    canvas.getObjects().forEach((obj) => {{
-                        savedData.push({{
-                            id: obj.itemId,
-                            x: Math.round(obj.left),
-                            y: Math.round(obj.top),
-                            scale: parseFloat(obj.scaleX.toFixed(3))
-                        }});
-                    }});
-
-                    const jsonStr = JSON.stringify(savedData);
-                    navigator.clipboard.writeText(jsonStr).then(() => {{
-                        const st = document.getElementById('saveStatus');
-                        st.style.display = 'inline';
-                        setTimeout(() => {{ st.style.display = 'none'; }}, 3000);
-                    }});
-                }}
-            </script>
-            """
-            components.html(fabric_html, height=canvas_h + 70)
-
-            # خانة استلام التعديلات لحفظها في خادم التصدير
-            saved_coords = st.text_input("كود حفظ الأماكن (اضغط زر الحفظ الأزرق أعلاه ثم الصقه هنا لتحديث ملف الطباعة):", "")
-            if saved_coords:
-                try:
-                    updates = json.loads(saved_coords)
-                    for up in updates:
-                        for it in st.session_state.a4_items:
-                            if it["id"] == up["id"]:
-                                it["x"] = up["x"]
-                                it["y"] = up["y"]
-                                it["scale"] = up["scale"]
-                    st.success("تم تحديث مواقع المستمسكات وأحجامها في ملف الطباعة النهائي!")
-                except:
-                    pass
-
-        with col_export:
-            st.subheader("💾 قائمة المستمسكات والتصدير")
-
-            for i, it in enumerate(st.session_state.a4_items):
-                col_i1, col_i2 = st.columns([3, 1])
-                with col_i1:
-                    st.write(f"📄 **{it['title']}**")
-                with col_i2:
-                    if st.button("حذف", key=f"del_a4_{i}"):
-                        st.session_state.a4_items.pop(i)
+                    if abs(st.session_state.a4_items[cur_i]["x"] - new_x_pct) > 2 or abs(st.session_state.a4_items[cur_i]["y"] - new_y_pct) > 2:
+                        st.session_state.a4_items[cur_i]["x"] = new_x_pct
+                        st.session_state.a4_items[cur_i]["y"] = new_y_pct
                         st.rerun()
 
-            if st.button("🧹 تفريغ الورقة بالكامل"):
-                st.session_state.a4_items = []
-                st.rerun()
+        with col_controls:
+            st.subheader("🎯 تحكم بالمستمسك المحدد")
+            
+            item_names = [f"{i+1}. {it['title']}" for i, it in enumerate(st.session_state.a4_items)]
+            sel_name = st.selectbox(
+                "اختر المستمسك النشط للتحكم:", 
+                item_names, 
+                index=min(st.session_state.active_doc_idx, len(item_names)-1)
+            )
+            st.session_state.active_doc_idx = item_names.index(sel_name)
+            curr = st.session_state.a4_items[st.session_state.active_doc_idx]
+
+            st.markdown("#### ⚡ خيارات التموضع والمقاس")
+            quick_p = st.selectbox(
+                "أماكن جاهزة بنقرة واحدة:",
+                ["تحديد حر (انقر على الورقة)", "أعلى اليمين", "أعلى اليسار", "منتصف الورقة", "أسفل اليمين", "أسفل اليسار"],
+                key=f"qp_{st.session_state.active_doc_idx}"
+            )
+            if quick_p == "أعلى اليمين":
+                curr['x'], curr['y'] = 52, 6
+            elif quick_p == "أعلى اليسار":
+                curr['x'], curr['y'] = 6, 6
+            elif quick_p == "منتصف الورقة":
+                curr['x'], curr['y'] = 26, 36
+            elif quick_p == "أسفل اليمين":
+                curr['x'], curr['y'] = 52, 62
+            elif quick_p == "أسفل اليسار":
+                curr['x'], curr['y'] = 6, 62
+
+            curr['scale'] = st.slider("🔍 المقاس والتكبير (%)", 30, 200, int(curr['scale']), step=5)
+            curr['x'] = st.slider("↔️ الموضع الأفقي X (%)", 0, 85, int(curr['x']), step=1)
+            curr['y'] = st.slider("↕️ الموضع الرأسي Y (%)", 0, 85, int(curr['y']), step=1)
+
+            col_b1, col_b2 = st.columns(2)
+            with col_b1:
+                if st.button("🗑️ حذف هذا المستمسك", key="del_one"):
+                    st.session_state.a4_items.pop(st.session_state.active_doc_idx)
+                    st.session_state.active_doc_idx = 0
+                    st.rerun()
+            with col_b2:
+                if st.button("🧹 تفريغ الورقة بالكامل"):
+                    st.session_state.a4_items = []
+                    st.session_state.active_doc_idx = 0
+                    st.rerun()
 
             st.markdown("---")
-            st.subheader("🖨️ خيارات التحميل والطباعة")
-            out_fmt = st.selectbox("صيغة التصدير:", ["PDF جاهز للطباعة", "صورة JPG", "صورة PNG عالية الجودة"])
-            comp_level = st.slider("مستوى ضغط الحجم وجودة الملف (%):", 20, 100, 85)
+            st.subheader("💾 تحميل الملف والطباعة")
+            fmt = st.selectbox("صيغة التصدير:", ["PDF جاهز للطباعة", "صورة JPG", "صورة PNG عالية الجودة"])
+            quality = st.slider("مستوى ضغط الحجم وجودة الملف (%):", 20, 100, 85)
 
-            # توليد ورقة A4 الحقيقية بناءً على الأماكن المحددة بالماوس
-            scale_factor = A4_WIDTH / float(canvas_w)
-            sheet_final = Image.new("RGB", (A4_WIDTH, A4_HEIGHT), (255, 255, 255))
-
+            # تجهيز ورقة الطباعة بدقة الطباعة الأصلية 300 DPI
+            final_sheet = Image.new("RGB", (A4_WIDTH, A4_HEIGHT), (255, 255, 255))
             for it in st.session_state.a4_items:
-                doc_img = Image.fromarray(it["img_np"])
-                # حساب الحجم والموقع بناءً على ما حركه المستخدم بالماوس
-                target_w = int(doc_img.width * it["scale"] * scale_factor)
-                target_h = int(doc_img.height * it["scale"] * scale_factor)
-                
-                if target_w > 10 and target_h > 10:
-                    resized = doc_img.resize((target_w, target_h), Image.Resampling.LANCZOS)
-                    posX = int(it["x"] * scale_factor)
-                    posY = int(it["y"] * scale_factor)
-                    sheet_final.paste(resized, (posX, posY))
+                doc_im = Image.fromarray(it["img"])
+                w_px = int(A4_WIDTH * 0.44 * (it["scale"] / 100.0))
+                ar = doc_im.height / float(doc_im.width)
+                h_px = int(w_px * ar)
 
-            # تصدير الملف
-            buf_out = io.BytesIO()
-            if out_fmt == "PDF جاهز للطباعة":
-                sheet_final.save(buf_out, format="PDF", resolution=300.0, quality=comp_level)
-                m_type = "application/pdf"
-                f_ext = "pdf"
-            elif out_fmt == "صورة JPG":
-                sheet_final.save(buf_out, format="JPEG", quality=comp_level, optimize=True)
-                m_type = "image/jpeg"
-                f_ext = "jpg"
+                if w_px > 20 and h_px > 20:
+                    resized = doc_im.resize((w_px, h_px), Image.Resampling.LANCZOS)
+                    pos_x = int(A4_WIDTH * (it["x"] / 100.0))
+                    pos_y = int(A4_HEIGHT * (it["y"] / 100.0))
+                    final_sheet.paste(resized, (pos_x, pos_y))
+
+            buf = io.BytesIO()
+            if fmt == "PDF جاهز للطباعة":
+                final_sheet.save(buf, format="PDF", resolution=300.0, quality=quality)
+                mtype = "application/pdf"
+                ext = "pdf"
+            elif fmt == "صورة JPG":
+                final_sheet.save(buf, format="JPEG", quality=quality, optimize=True)
+                mtype = "image/jpeg"
+                ext = "jpg"
             else:
-                sheet_final.save(buf_out, format="PNG", optimize=True)
-                m_type = "image/png"
-                f_ext = "png"
+                final_sheet.save(buf, format="PNG", optimize=True)
+                mtype = "image/png"
+                ext = "png"
 
-            file_kb = len(buf_out.getvalue()) / 1024.0
-            st.info(f"📊 حجم الملف: **{file_kb:.1f} كيلوبايت**")
+            kb_size = len(buf.getvalue()) / 1024.0
+            st.info(f"📊 حجم الملف: **{kb_size:.1f} كيلوبايت**")
 
             st.download_button(
-                label=f"📥 تحميل ورقة A4 بصيغة ({f_ext.upper()})",
-                data=buf_out.getvalue(),
-                file_name=f"documents_A4.{f_ext}",
-                mime=m_type,
+                label=f"📥 تحميل ورقة A4 بصيغة ({ext.upper()})",
+                data=buf.getvalue(),
+                file_name=f"documents_A4.{ext}",
+                mime=mtype,
                 type="primary",
                 use_container_width=True
             )
