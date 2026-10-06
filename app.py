@@ -3,10 +3,12 @@ import cv2
 import numpy as np
 from PIL import Image
 import io
+import base64
+import json
+import streamlit.components.v1 as components
 
-st.set_page_config(page_title="منظومة معالجة وتنظيم المستمسكات A4", layout="wide", page_icon="📄")
+st.set_page_config(page_title="منظومة معالجة وتنظيم المستمسكات A4", layout="wide", page_icon="🪪")
 
-# أبعاد ورقة A4 بدقة 300 DPI للطباعة القياسية (2480 x 3508 بكسل)
 A4_WIDTH = 2480
 A4_HEIGHT = 3508
 
@@ -15,8 +17,8 @@ if 'a4_docs' not in st.session_state:
 
 st.markdown("""
 <div dir="rtl" style="text-align: center;">
-    <h2>🪪 منظومة تصحيح زوايا المستمسكات وتجهيز ورق الطباعة A4</h2>
-    <p>قم باستعدال زوايا الهويات، وتحديد أماكنها بدقة داخل ورقة A4، وتصديرها بصيغة PDF أو صور جاهزة للطباعة المباشرة.</p>
+    <h2>🪪 منظومة تصحيح زوايا المستمسكات بالسحب والإفلات (A4)</h2>
+    <p>اسحب الدوائر الأربع المرقمة بالماوس وضعها على زوايا البطاقة مباشرة، ثم أضفها لورقة الـ A4 للطباعة والتصدير.</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -65,136 +67,212 @@ def enhance_image(img, mode="color"):
         limg = cv2.merge((cl, a, b))
         return cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
 
-# تقسيم الشاشة إلى تبويبات
-tab1, tab2 = st.tabs(["1️⃣ تعديل زوايا المستمسك وتجهيزه", "2️⃣ تنظيم وطباعة ورقة A4 (مستمسكات متعددة)"])
+tab1, tab2 = st.tabs(["1️⃣ تحديد الزوايا بالماوس وقص المستمسك", "2️⃣ تنظيم وطباعة ورقة A4 (مستمسكات متعددة)"])
 
 with tab1:
-    uploaded_file = st.file_uploader("ارفع صورة المستمسك (جواز، هوية، بطاقة سكن):", type=['jpg', 'jpeg', 'png'])
+    uploaded_file = st.file_uploader("ارفع صورة المستمسك (جواز، بطاقة موحدة، هوية، سكن):", type=['jpg', 'jpeg', 'png'])
 
     if uploaded_file is not None:
         file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
         img_bgr = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-        h, w = img_bgr.shape[:2]
+        h_orig, w_orig = img_bgr.shape[:2]
 
-        st.sidebar.markdown("### 🎯 تحديد الزوايا الأربع")
-        
-        # النقاط الافتراضية
-        col_s1, col_s2 = st.sidebar.columns(2)
-        with col_s1:
-            p1_x = st.number_input("نقطة 1 (X) أعلى يسار", 0, w, int(w * 0.05), step=10)
-            p1_y = st.number_input("نقطة 1 (Y) أعلى يسار", 0, h, int(h * 0.05), step=10)
-            p4_x = st.number_input("نقطة 4 (X) أسفل يسار", 0, w, int(w * 0.05), step=10)
-            p4_y = st.number_input("نقطة 4 (Y) أسفل يسار", 0, h, int(h * 0.95), step=10)
-        with col_s2:
-            p2_x = st.number_input("نقطة 2 (X) أعلى يمين", 0, w, int(w * 0.95), step=10)
-            p2_y = st.number_input("نقطة 2 (Y) أعلى يمين", 0, h, int(h * 0.05), step=10)
-            p3_x = st.number_input("نقطة 3 (X) أسفل يمين", 0, w, int(w * 0.95), step=10)
-            p3_y = st.number_input("نقطة 3 (Y) أسفل يمين", 0, h, int(h * 0.95), step=10)
+        # تحويل الصورة إلى base64 للعرض داخل Canvas التفاعلي
+        _, buffer = cv2.imencode('.jpg', img_bgr)
+        img_base64 = base64.b64encode(buffer).decode()
 
-        pts = np.array([
-            [p1_x, p1_y],
-            [p2_x, p2_y],
-            [p3_x, p3_y],
-            [p4_x, p4_y]
-        ], dtype="float32")
+        # إعداد مقاس مناسب للكانفاس في العرض
+        canvas_width = 700
+        canvas_height = int(h_orig * (canvas_width / float(w_orig)))
 
-        # رسم الخطوط والأرقام التوضيحية (1 إلى 2، 2 إلى 3، 3 إلى 4، 4 إلى 1)
-        preview = img_bgr.copy()
-        pts_int = pts.astype(np.int32)
-        
-        # خطوط ملونة وواضحة
-        cv2.line(preview, tuple(pts_int[0]), tuple(pts_int[1]), (0, 255, 0), 4) # 1 -> 2
-        cv2.line(preview, tuple(pts_int[1]), tuple(pts_int[2]), (0, 255, 0), 4) # 2 -> 3
-        cv2.line(preview, tuple(pts_int[2]), tuple(pts_int[3]), (0, 255, 0), 4) # 3 -> 4
-        cv2.line(preview, tuple(pts_int[3]), tuple(pts_int[0]), (0, 255, 0), 4) # 4 -> 1
+        col_crop, col_res = st.columns([1.2, 1])
 
-        for idx, p in enumerate(pts_int):
-            cv2.circle(preview, (p[0], p[1]), 14, (0, 0, 255), -1)
-            cv2.putText(preview, str(idx + 1), (p[0] + 15, p[1] + 15),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 0, 0), 3)
-
-        col_img1, col_img2 = st.columns(2)
-        with col_img1:
-            st.subheader("معاينة التحديد والخطوط")
-            st.image(cv2.cvtColor(preview, cv2.COLOR_BGR2RGB), use_container_width=True)
-
-        with col_img2:
-            st.subheader("النتيجة المستوية المستخرجة")
-            warped = warp_perspective_points(img_bgr, pts)
+        with col_crop:
+            st.subheader("🎯 اسحب النقاط الـ 4 بالماوس فوق زوايا الهوية:")
             
-            mode = st.radio("نمط الألوان:", ["ألوان محسنة", "أبيض وأسود سكنر", "تدرج رمادي"], horizontal=True)
-            mode_map = {"ألوان محسنة": "color", "أبيض وأسود سكنر": "scanner", "تدرج رمادي": "gray"}
-            result = enhance_image(warped, mode_map[mode])
+            # مكون تفاعلي فائق السلاسة بالسحب والإفلات عبر HTML5 Canvas
+            canvas_html = f"""
+            <div style="direction: ltr; text-align: center;">
+                <canvas id="docCanvas" width="{canvas_width}" height="{canvas_height}" style="border:2px solid #333; cursor:crosshair; border-radius: 8px;"></canvas>
+                <div style="margin-top: 10px;">
+                    <button onclick="copyCoords()" style="background-color: #2e7d32; color: white; border: none; padding: 10px 18px; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: bold;">
+                        ✅ نسخ إحداثيات الزوايا بعد الضبط
+                    </button>
+                    <span id="copiedMsg" style="color: green; margin-left: 10px; font-weight: bold; display: none;">تم النسخ إلى الحافظة! الصقها أدناه.</span>
+                </div>
+            </div>
 
-            if mode in ["أبيض وأسود سكنر", "تدرج رمادي"]:
-                st.image(result, use_container_width=True)
-                res_to_save = cv2.cvtColor(result, cv2.COLOR_GRAY2RGB)
-            else:
-                res_to_save = cv2.cvtColor(result, cv2.COLOR_BGR2RGB)
-                st.image(res_to_save, use_container_width=True)
+            <script>
+                const canvas = document.getElementById('docCanvas');
+                const ctx = canvas.getContext('2d');
+                const img = new Image();
+                img.src = "data:image/jpeg;base64,{img_base64}";
 
-            doc_name = st.text_input("اسم هذا المستمسك (مثلاً: البطاقة الوطنية - وجه):", "مستمسك 1")
-            if st.button("➕ إضافة هذا المستمسك إلى ورقة A4", type="primary"):
-                st.session_state.a4_docs.append({
-                    "name": doc_name,
-                    "img": res_to_save,
-                    "x_pos": 10,   # نسبة مئوية من العرض
-                    "y_pos": 10 + len(st.session_state.a4_docs) * 25,  # تموضع تلقائي متدرج
-                    "scale": 100   # الحجم بالنسبة المئوية
-                })
-                st.success(f"تمت إضافة '{doc_name}' إلى ورقة A4 بنجاح! انتقل للتبويب الثاني.")
+                let points = [
+                    {{x: {int(canvas_width * 0.1)}, y: {int(canvas_height * 0.1)}, label: "1"}},
+                    {{x: {int(canvas_width * 0.9)}, y: {int(canvas_height * 0.1)}, label: "2"}},
+                    {{x: {int(canvas_width * 0.9)}, y: {int(canvas_height * 0.9)}, label: "3"}},
+                    {{x: {int(canvas_width * 0.1)}, y: {int(canvas_height * 0.9)}, label: "4"}}
+                ];
+
+                let draggedPoint = null;
+                const radius = 12;
+
+                function draw() {{
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+                    // رسم الخطوط الخضراء التوضيحية
+                    ctx.strokeStyle = '#00FF00';
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.moveTo(points[0].x, points[0].y);
+                    for (let i = 1; i < points.length; i++) {{
+                        ctx.lineTo(points[i].x, points[i].y);
+                    }}
+                    ctx.closePath();
+                    ctx.stroke();
+
+                    // رسم النقاط والأرقام
+                    points.forEach((p, idx) => {{
+                        ctx.fillStyle = '#FF0000';
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.strokeStyle = '#FFFFFF';
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+
+                        // الرقم
+                        ctx.fillStyle = '#0000FF';
+                        ctx.font = 'bold 18px Arial';
+                        ctx.fillText(p.label, p.x + 14, p.y - 8);
+                    }});
+                }}
+
+                img.onload = () => {{ draw(); }};
+
+                function getMousePos(evt) {{
+                    const rect = canvas.getBoundingClientRect();
+                    return {{
+                        x: evt.clientX - rect.left,
+                        y: evt.clientY - rect.top
+                    }};
+                }}
+
+                canvas.addEventListener('mousedown', (e) => {{
+                    const pos = getMousePos(e);
+                    points.forEach((p) => {{
+                        const dist = Math.hypot(p.x - pos.x, p.y - pos.y);
+                        if (dist < radius + 6) {{
+                            draggedPoint = p;
+                        }}
+                    }});
+                }});
+
+                canvas.addEventListener('mousemove', (e) => {{
+                    if (draggedPoint) {{
+                        const pos = getMousePos(e);
+                        draggedPoint.x = Math.max(0, Math.min(canvas.width, pos.x));
+                        draggedPoint.y = Math.max(0, Math.min(canvas.height, pos.y));
+                        draw();
+                    }}
+                }});
+
+                canvas.addEventListener('mouseup', () => {{ draggedPoint = null; }});
+                canvas.addEventListener('mouseleave', () => {{ draggedPoint = null; }});
+
+                function copyCoords() {{
+                    const scaleX = {w_orig} / {canvas_width};
+                    const scaleY = {h_orig} / {canvas_height};
+                    const rawPts = points.map(p => [Math.round(p.x * scaleX), Math.round(p.y * scaleY)]);
+                    const jsonStr = JSON.stringify(rawPts);
+                    
+                    navigator.clipboard.writeText(jsonStr).then(() => {{
+                        const msg = document.getElementById('copiedMsg');
+                        msg.style.display = 'inline';
+                        setTimeout(() => {{ msg.style.display = 'none'; }}, 3000);
+                    }});
+                }}
+            </script>
+            """
+            components.html(canvas_html, height=canvas_height + 80)
+
+            pts_input = st.text_input("كود الإحداثيات (اضغط الزر الأخضر في الأعلى ثم الصقه هنا):", 
+                                      value=f"[[{int(w_orig*0.05)}, {int(h_orig*0.05)}], [{int(w_orig*0.95)}, {int(h_orig*0.05)}], [{int(w_orig*0.95)}, {int(h_orig*0.95)}], [{int(w_orig*0.05)}, {int(h_orig*0.95)}]]")
+
+        with col_res:
+            st.subheader("النتيجة المستوية المستخرجة")
+            try:
+                selected_pts = np.array(json.loads(pts_input), dtype="float32")
+                warped = warp_perspective_points(img_bgr, selected_pts)
+
+                mode = st.radio("نمط الألوان:", ["ألوان محسنة", "أبيض وأسود سكنر", "تدرج رمادي"], horizontal=True)
+                mode_map = {"ألوان محسنة": "color", "أبيض وأسود سكنر": "scanner", "تدرج رمادي": "gray"}
+                result = enhance_image(warped, mode_map[mode])
+
+                if mode in ["أبيض وأسود سكنر", "تدرج رمادي"]:
+                    res_to_save = cv2.cvtColor(result, cv2.COLOR_GRAY2RGB)
+                else:
+                    res_to_save = cv2.cvtColor(result, cv2.COLOR_BGR2RGB)
+
+                st.image(res_to_save, caption="المستمسك بعد الاستعدال والتسوية", use_container_width=True)
+
+                doc_name = st.text_input("اسم المستمسك:", "بطاقة / مستمسك")
+                if st.button("➕ إضافة المستمسك لورقة الـ A4", type="primary"):
+                    st.session_state.a4_docs.append({
+                        "name": doc_name,
+                        "img": res_to_save,
+                        "x_pos": 10,
+                        "y_pos": 10 + len(st.session_state.a4_docs) * 22,
+                        "scale": 100
+                    })
+                    st.success(f"تمت إضافة {doc_name} لورقة الـ A4 بنجاح!")
+            except Exception as e:
+                st.error("تأكد من لصق كود الإحداثيات الصحيح.")
 
 with tab2:
-    st.markdown("### 🖨️ تجهيز وتنسيق ورقة الطباعة A4")
+    st.markdown("### 🖨️ تنظيم وتحميل ورقة الطباعة A4")
     
     if len(st.session_state.a4_docs) == 0:
-        st.info("لم تقم بإضافة أي مستمسك بعد. قم بقص المستمسكات من التبويب الأول ثم اضغط 'إضافة إلى ورقة A4'.")
+        st.info("لم تقم بإضافة أي مستمسك بعد. قم بتعديل المستمسك في التبويب الأول ثم أضفه إلى الورقة.")
     else:
         col_ctrl, col_canvas = st.columns([1, 1.3])
         
         with col_ctrl:
             st.subheader("📐 تحكم بمواقع وأحجام المستمسكات")
-            
             for i, doc in enumerate(st.session_state.a4_docs):
-                with st.expander(f"⚙️ إعدادات: {doc['name']}", expanded=True):
-                    doc['x_pos'] = st.slider(f"الموقع الأفقي X (يسار - يمين) - {doc['name']}", 0, 80, doc['x_pos'], key=f"x_{i}")
-                    doc['y_pos'] = st.slider(f"الموقع الرأسي Y (أعلى - أسفل) - {doc['name']}", 0, 85, doc['y_pos'], key=f"y_{i}")
-                    doc['scale'] = st.slider(f"تكبير / تصغير الحجم (%) - {doc['name']}", 20, 200, doc['scale'], key=f"scale_{i}")
-                    
+                with st.expander(f"⚙️ تموضع: {doc['name']}", expanded=True):
+                    doc['x_pos'] = st.slider(f"أفقي X (يسار - يمين) - {doc['name']}", 0, 80, doc['x_pos'], key=f"x_{i}")
+                    doc['y_pos'] = st.slider(f"رأسي Y (أعلى - أسفل) - {doc['name']}", 0, 85, doc['y_pos'], key=f"y_{i}")
+                    doc['scale'] = st.slider(f"الحجم (%) - {doc['name']}", 20, 200, doc['scale'], key=f"scale_{i}")
                     if st.button(f"🗑️ حذف {doc['name']}", key=f"del_{i}"):
                         st.session_state.a4_docs.pop(i)
                         st.rerun()
 
-            if st.button("🧹 مسح كافة المستمسكات من الورقة"):
+            if st.button("🧹 تفريغ الورقة بالكامل"):
                 st.session_state.a4_docs = []
                 st.rerun()
 
             st.markdown("---")
-            st.subheader("💾 إعدادات التحميل والضغط")
-            export_format = st.selectbox("صيغة التصدير المطلوبة:", ["PDF جاهز للطباعة", "صورة JPG", "صورة PNG عالية الدقة"])
-            compress_quality = st.slider("مستوى الجودة وضغط الحجم (%)", 20, 100, 85, help="تقليل الرقم يقلل حجم الملف جداً لمشاركته عبر الواتساب أو رفعه للمواقع الحكومية.")
+            st.subheader("💾 خيارات الحفظ والضغط")
+            export_format = st.selectbox("صيغة الملف:", ["PDF جاهز للطباعة", "صورة JPG", "صورة PNG عالية الدقة"])
+            compress_quality = st.slider("جودة وضغط الحجم (%)", 20, 100, 85)
 
-        # توليد ورقة الـ A4 بيضاء نقية
         a4_sheet = Image.new("RGB", (A4_WIDTH, A4_HEIGHT), (255, 255, 255))
-        
-        # لصق كل مستمسك في موقعه وحجمه
         for doc in st.session_state.a4_docs:
             doc_img = Image.fromarray(doc['img'])
-            # إعادة تحجيم المستمسك بناءً على مقياس A4
             base_w = int(A4_WIDTH * 0.45 * (doc['scale'] / 100.0))
             aspect_ratio = doc_img.height / float(doc_img.width)
             base_h = int(base_w * aspect_ratio)
-            
             resized_doc = doc_img.resize((base_w, base_h), Image.Resampling.LANCZOS)
-            
             x_px = int(A4_WIDTH * (doc['x_pos'] / 100.0))
             y_px = int(A4_HEIGHT * (doc['y_pos'] / 100.0))
-            
             a4_sheet.paste(resized_doc, (x_px, y_px))
 
         with col_canvas:
-            st.subheader("📄 معاينة ورقة A4 النهائية")
-            st.image(a4_sheet, caption="ورقة A4 بمقاس الطباعة الحقيقي", use_container_width=True)
+            st.subheader("معاينة ورقة A4")
+            st.image(a4_sheet, use_container_width=True)
 
             buf = io.BytesIO()
             if export_format == "PDF جاهز للطباعة":
@@ -211,7 +289,7 @@ with tab2:
                 file_ext = "png"
 
             file_size_kb = len(buf.getvalue()) / 1024.0
-            st.caption(f"حجم الملف المتوقع: **{file_size_kb:.1f} كيلوبايت** ({file_size_kb/1024:.2f} ميجابايت)")
+            st.caption(f"حجم الملف: **{file_size_kb:.1f} KB** ({file_size_kb/1024:.2f} MB)")
 
             st.download_button(
                 label=f"📥 تحميل ورقة A4 بصيغة ({file_ext.upper()})",
